@@ -1,0 +1,5 @@
+spring:
+  application:
+    name: grpc-client
+  main:
+    web-application-type: none
