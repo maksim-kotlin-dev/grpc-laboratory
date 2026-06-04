@@ -1,116 +1,204 @@
-# gRPC Pet Project
+# branch01 — Unary RPC
 
-Демонстраційний мультимодульний Gradle-проект з використанням gRPC та Spring Boot 4.
+Часть серии [grpc-laboratory](plan.md) — учебного репозитория, где каждая ветка демонстрирует одну концепцию gRPC.
 
-## Опис
+---
 
-Проект містить два сервіси, що спілкуються між собою через gRPC **server-side streaming**:
+## Концепция
 
-- **grpc-server** — gRPC-сервер. Після підключення клієнта кожну хвилину відправляє повідомлення `"Хелло уорлд [mm:ss]"`, де `mm:ss` — поточний час у форматі хвилини:секунди.
-- **grpc-client** — gRPC-клієнт. Підписується на стрім сервера та виводить кожне повідомлення в консоль. При розриві з'єднання автоматично перепідключається через 5 секунд.
-
-### Схема взаємодії
+**Unary RPC** — простейший тип взаимодействия в gRPC.  
+Клиент отправляет **один запрос** → сервер возвращает **один ответ**.  
+Аналог обычного HTTP GET-запроса, только поверх HTTP/2 с бинарной сериализацией.
 
 ```
-grpc-client  ──── StreamHello() ────►  grpc-server
-             ◄─── "Хелло уорлд [mm:ss]" кожну хвилину ───
+grpc-client  ──── SayHello("World") ────►  grpc-server
+             ◄──── "Hello from server, Maksim!" ────
 ```
 
-## Стек технологій
+### Proto-контракт
 
-| Компонент | Версія |
+```protobuf
+service HelloService {
+  rpc SayHello (HelloRequest) returns (HelloResponse);
+}
+
+message HelloRequest {
+  string name = 1;
+}
+
+message HelloResponse {
+  string message = 1;
+}
+```
+
+---
+
+## Что реализовано
+
+### Сервер (`grpc-server`)
+
+- Аннотация `@GrpcService` регистрирует сервис в Spring-контексте
+- Метод `sayHello` принимает `HelloRequest`, возвращает `HelloResponse`
+- Ответ: `"Hello from server, {name}!"`
+
+```kotlin
+@GrpcService
+class HelloServiceImpl : HelloServiceGrpc.HelloServiceImplBase() {
+
+    override fun sayHello(
+        request: HelloRequest,
+        responseObserver: StreamObserver<HelloResponse>
+    ) {
+        val response = HelloResponse.newBuilder()
+            .setMessage("Hello from server, ${request.name}!")
+            .build()
+        responseObserver.onNext(response)
+        responseObserver.onCompleted()
+    }
+}
+```
+
+### Клиент (`grpc-client`)
+
+- Открывает `ManagedChannel` к серверу
+- Использует `blockingStub` — синхронный (блокирующий) вызов
+- При старте приложения отправляет запрос и выводит ответ в лог
+
+```kotlin
+val channel = ManagedChannelBuilder.forAddress(host, port).usePlaintext().build()
+val stub = HelloServiceGrpc.newBlockingStub(channel)
+
+val response = stub.sayHello(
+    HelloRequest.newBuilder().setName("Maksim").build()
+)
+log.info(">>> ${response.message}")
+```
+
+---
+
+## Что демонстрирует пример
+
+| Концепция | Описание |
+|---|---|
+| `.proto` синтаксис | Структура service, rpc, message |
+| Генерация stubs | Gradle плагин `protobuf` генерирует Java/Kotlin классы из `.proto` |
+| `@GrpcService` | Регистрация gRPC-сервиса в Spring Boot |
+| `blockingStub` | Синхронный вызов — поток ждёт ответа |
+| `ManagedChannel` | Долгоживущее HTTP/2-соединение к серверу |
+| Один запрос → один ответ | Базовая модель взаимодействия Unary RPC |
+
+---
+
+## Стек технологий
+
+| Компонент | Версия |
 |---|---|
 | Kotlin | 2.2.21 |
 | Spring Boot | 4.0.6 |
 | Spring gRPC | 1.0.3 |
 | Protocol Buffers | 3 |
-| Java | 21 |
+| Java | 17 |
 | Docker Compose | v2 |
 
-## Запуск через Docker Desktop
+---
 
-### Передумови
+## Запуск
 
-- Docker Desktop встановлено та запущено
-
-### Перший запуск (збірка + старт)
+### Через Docker (рекомендуется)
 
 ```bash
 docker compose up --build
 ```
 
-Перший запуск займає кілька хвилин — збирає JAR-файли всередині контейнерів.
+Первый запуск занимает несколько минут — сборка JAR внутри контейнеров.
 
-### Повторний запуск (без перезбірки)
+После запуска:
+- `grpc-server` слушает на порту `9090`
+- `grpc-client` подключается, отправляет запрос и выводит ответ в лог
 
-```bash
-docker compose up
-```
-
-Після старту:
-- `grpc-server` слухає на порту `9090`
-- `grpc-client` підключається до сервера і щохвилини виводить повідомлення в лог
-
-### Перегляд логів клієнта
+### Просмотр логов
 
 ```bash
 docker compose logs -f grpc-client
 ```
 
-Приклад виводу:
+Ожидаемый вывод:
+
 ```
 grpc-client  | ... Connecting to grpc-server:9090
-grpc-client  | ... Subscribing to server stream...
-grpc-client  | ... >>> Хелло уорлд [11:34]
-grpc-client  | ... >>> Хелло уорлд [12:34]
+grpc-client  | ... Sending request: name=Maksim
+grpc-client  | ... >>> Hello from server, Maksim!
 ```
 
-### Зупинка
+### Остановка
 
 ```bash
 docker compose down
 ```
 
-## Конфігурація клієнта
+### Локальный запуск (без Docker)
 
-Адреса сервера задається через змінні середовища (за замовчуванням — `localhost:9090`):
+```bash
+# Терминал 1 — сервер
+./gradlew :grpc-server:bootRun
 
-| Змінна              | За замовчуванням | Опис                  |
-|---------------------|------------------|-----------------------|
-| `GRPC_SERVER_HOST`  | `localhost`      | Хост gRPC-сервера     |
-| `GRPC_SERVER_PORT`  | `9090`           | Порт gRPC-сервера     |
+# Терминал 2 — клиент
+./gradlew :grpc-client:bootRun
+```
 
-У `docker-compose.yml` ці змінні автоматично вказують на контейнер `grpc-server`.
+---
 
-## Структура проекту
+## Конфигурация клиента
+
+Адрес сервера задаётся через переменные окружения:
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `GRPC_SERVER_HOST` | `localhost` | Хост gRPC-сервера |
+| `GRPC_SERVER_PORT` | `9090` | Порт gRPC-сервера |
+
+В `docker-compose.yml` эти переменные автоматически указывают на контейнер `grpc-server`.
+
+---
+
+## Структура проекта
 
 ```
-grpc1PetProject/
+grpc-laboratory/
 ├── grpc-server/
-│   ├── src/main/proto/hello.proto      — контракт gRPC-сервісу
+│   ├── src/main/proto/hello.proto          — gRPC контракт (HelloService)
 │   ├── src/main/kotlin/.../
-│   │   ├── ServerApplication.kt        — точка входу
-│   │   └── HelloServiceImpl.kt         — реалізація server-side streaming
+│   │   ├── ServerApplication.kt            — точка входа
+│   │   └── HelloServiceImpl.kt             — реализация SayHello
 │   ├── src/main/resources/application.yaml
 │   └── Dockerfile
 ├── grpc-client/
-│   ├── src/main/proto/hello.proto      — контракт (для генерації stubs)
+│   ├── src/main/proto/hello.proto          — контракт (для генерации stubs)
 │   ├── src/main/kotlin/.../
-│   │   ├── ClientApplication.kt        — точка входу
-│   │   └── HelloClient.kt              — підписка на стрім + авторепідключення
+│   │   ├── ClientApplication.kt            — точка входа
+│   │   └── HelloClient.kt                  — blockingStub вызов
 │   ├── src/main/resources/application.yaml
 │   └── Dockerfile
 ├── docker-compose.yml
-├── .dockerignore
+├── build.gradle.kts
 └── settings.gradle.kts
 ```
 
-## Локальний запуск (без Docker)
+---
 
-```bash
-# Термінал 1 — сервер
-./gradlew :grpc-server:bootRun
+## Навигация по веткам
 
-# Термінал 2 — клієнт
-./gradlew :grpc-client:bootRun
-```
+| Ветка | Концепция |
+|---|---|
+| `main` | Базовая инфраструктура |
+| **`branch01_Unary-RPC`** | **Один запрос → один ответ** ← вы здесь |
+| `branch02_Server-Streaming` | Сервер шлёт поток клиенту |
+| `branch03_Client-Streaming` | Клиент шлёт поток серверу |
+| `branch04_Bidirectional-Streaming` | Двунаправленный стриминг |
+| `branch05_Deadlines-Timeouts` | Ограничение времени RPC |
+| `branch06_Cancelling-RPC` | Отмена RPC со стороны клиента |
+| `branch07_Sync-vs-Async-clients` | blockingStub vs asyncStub |
+| `branch08_Channels-lifecycle` | Управление ManagedChannel |
+| `branch09_Error-handling` | gRPC Status codes |
+| `branch10_Metadata-Interceptors` | Metadata, Auth, Interceptors |
+| `branch11_Final-monitoring-system` | Production-like финальный пример |
