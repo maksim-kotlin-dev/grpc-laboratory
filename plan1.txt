@@ -1,0 +1,426 @@
+------ Наименование веток: ---------------------
+main
+branch01_Unary-RPC
+branch02_Server-Streaming
+branch03_Client-Streaming
+branch04_Bidirectional-Streaming
+branch05_Deadlines-Timeouts
+branch06_Cancelling-RPC
+branch07_Sync-vs-Async-clients
+branch08_Channels-lifecycle
+branch09_Error-handling
+branch10_Metadata-Interceptors
+branch11_Final-monitoring-system
+------ содержимое README.md в ветке main ---------------------
+branch01	Server Streaming: сервер каждую минуту шлет сообщение клиенту	базовый streaming
+branch02
+branch03 Client Streaming: клиент отправляет много событий, сервер отвечает итогом	client stream
+branch03	Bidirectional Streaming: клиент и сервер общаются одновременно	full duplex stream
+branch04	Deadlines / Timeouts	ограничение времени RPC
+branch05	Cancelling RPC	отмена долгого запроса
+branch06	Sync vs Async client	blocking stub vs async stub
+branch07	Channels / Load balancing / reconnect	управление соединением
+branch08	Error handling + Status codes	ошибки gRPC
+branch09	Metadata / Auth token	headers, token, interceptor
+branch10	Production-like demo	несколько клиентов, логирование, retry, healthcheck
+------ содержимое README.md в ветке branch01_Unary-RPC ---------------------
+rpc SayHello(HelloRequest) returns (HelloResponse);
+Что демонстрирует
+
+Самый простой запрос-ответ.
+
+Клиент:
+
+Hello Maksim
+
+Сервер:
+
+Hello from server
+
+Изучаем:
+
+protobuf
+grpc service
+stub
+docker
+один запрос → один ответ
+------ содержимое README.md в ветке branch02_Server-Streaming ---------------------
+rpc LotsOfReplies(HelloRequest)
+returns (stream HelloResponse);
+Сценарий
+
+Клиент подписывается на поток уведомлений.
+
+Отправляет:
+
+Start monitoring
+
+Сервер каждые 10 секунд отвечает:
+
+CPU 15%
+CPU 22%
+CPU 18%
+...
+
+Изучаем:
+
+server stream
+поток ответов
+клиент только читает
+
+По сути это как подписка на события.
+----- сценарий для ветки branch03_Client-Streaming ----
+Сценарий: клиент собирает метрики и отправляет их серверу пачкой через stream.
+
+Например:
+
+Клиент каждую секунду отправляет серверу состояние приложения: CPU, memory, activeUsers, timestamp.
+Сервер принимает поток сообщений, считает статистику и в конце возвращает один ответ: среднее CPU, максимум memory, количество сообщений.
+
+Что показать:
+
+client streaming RPC;
+клиент отправляет много сообщений;
+сервер отвечает один раз после завершения stream;
+сервер агрегирует данные;
+клиент явно закрывает stream.
+
+Хорошая функция ветки:
+
+Metrics Collector
+------ содержимое README.md в ветке branch03_Client-Streaming ---------------------
+rpc LotsOfGreetings(stream HelloRequest)
+returns (HelloResponse);
+Сценарий
+
+Клиент отправляет много метрик.
+
+CPU=15
+CPU=20
+CPU=18
+CPU=25
+
+После окончания потока сервер отвечает:
+
+Average CPU = 19.5
+
+Изучаем:
+
+stream от клиента
+агрегирование данных
+завершение потока
+------- сценарий для branch04_Bidirectional-Streaming ----------
+Сценарий: чат/мониторинг в обе стороны.
+
+Например:
+
+Клиент отправляет серверу события приложения.
+Сервер в ответ сразу может отправлять команды: “increase logging”, “restart module”, “warning: high CPU”.
+
+Что показать:
+
+клиент и сервер одновременно читают и пишут;
+сервер не ждет завершения клиентского потока;
+ответы могут приходить в любой момент;
+это уже похоже на WebSocket-style communication.
+
+Хорошая функция ветки:
+
+Real-time Control Channel
+------ содержимое README.md в ветке branch04_Bidirectional-Streaming ---------------------
+rpc BidiHello(stream HelloRequest)
+returns (stream HelloResponse);
+Сценарий
+
+Мини-чат.
+
+Клиент:
+
+Hello
+How are you?
+What time is it?
+
+Сервер может отвечать сразу:
+
+Hi
+Fine
+12:35
+
+или в любой другой момент.
+
+Изучаем:
+
+полный duplex
+независимые потоки чтения/записи
+самая мощная модель gRPC
+
+После этого уже идут не типы RPC, а дополнительные возможности gRPC:
+------ сценнарий для branch05_Deadlines-Timeouts ---------------------
+Сценарий: клиент запрашивает долгую операцию, но дает серверу максимум 3 секунды.
+
+Например:
+
+Клиент вызывает генерацию отчета.
+Сервер делает задержку 5 секунд.
+Клиент ставит deadline 3 секунды и получает DEADLINE_EXCEEDED.
+
+Что показать:
+
+deadline на клиенте;
+сервер проверяет, не отменен ли контекст;
+корректная остановка долгой операции;
+отличие timeout от обычной ошибки.
+
+Функция:
+
+Report Generator with Deadline
+------ содержимое README.md в ветке branch05_Deadlines-Timeouts ---------------------
+Deadlines / Timeouts
+
+DEADLINE_EXCEEDED
+------ сценарий branch06_Cancelling-RPC ---------------------
+Сценарий: клиент начал получать stream, но сам отменил подписку.
+
+Например:
+
+Клиент подписался на поток уведомлений.
+Через 10 секунд пользователь нажал “Stop”.
+Клиент отменяет RPC, сервер прекращает отправку.
+
+Что показать:
+
+cancellation со стороны клиента;
+реакция сервера на отмену;
+освобождение ресурсов;
+отличие cancellation от deadline.
+
+Функция:
+
+Notification Subscription with Cancel
+------ содержимое README.md в ветке branch06_Cancelling-RPC ---------------------
+Cancelling RPC
+
+client.cancel()
+------ сценарий для  branch07_Sync-vs-Async-clients ---------------------
+Сценарий: один и тот же RPC вызывается двумя способами.
+
+Например:
+
+В blocking режиме клиент ждет ответ и блокирует поток.
+В async режиме клиент отправляет запрос и продолжает работу, а ответ приходит callback/observer способом.
+
+Что показать:
+
+blocking stub;
+async stub;
+разницу в поведении клиента;
+где sync проще;
+где async лучше для stream и high-load.
+
+Функция:
+
+Sync vs Async Client Demo
+------ содержимое README.md в ветке branch07_Sync-vs-Async-clients ---------------------
+Blocking Stub vs Async Stub
+
+Synchronous client
+Asynchronous client
+------ содержимое README.md в ветке branch08_Channels-lifecycle ---------------------
+Channels Lifecycle
+
+reuse channel
+shutdown
+reconnect
+------ содержимое README.md в ветке branch09_Error-handling ---------------------
+Error Handling
+
+INVALID_ARGUMENT
+NOT_FOUND
+UNAVAILABLE
+PERMISSION_DENIED
+------ содержимое README.md в ветке branch10_Metadata-Interceptors ---------------------
+Metadata и Interceptors
+
+Authorization Token
+Request ID
+Correlation ID
+------ содержимое README.md в ветке branch11_Final-monitoring-system ---------------------
+
+
+---- черновик про эту идею ---
+branch02 — Client Streaming
+
+Сценарий: клиент собирает метрики и отправляет их серверу пачкой через stream.
+
+Например:
+
+Клиент каждую секунду отправляет серверу состояние приложения: CPU, memory, activeUsers, timestamp.
+Сервер принимает поток сообщений, считает статистику и в конце возвращает один ответ: среднее CPU, максимум memory, количество сообщений.
+
+Что показать:
+
+client streaming RPC;
+клиент отправляет много сообщений;
+сервер отвечает один раз после завершения stream;
+сервер агрегирует данные;
+клиент явно закрывает stream.
+
+Хорошая функция ветки:
+
+Metrics Collector
+branch03 — Bidirectional Streaming
+
+Сценарий: чат/мониторинг в обе стороны.
+
+Например:
+
+Клиент отправляет серверу события приложения.
+Сервер в ответ сразу может отправлять команды: “increase logging”, “restart module”, “warning: high CPU”.
+
+Что показать:
+
+клиент и сервер одновременно читают и пишут;
+сервер не ждет завершения клиентского потока;
+ответы могут приходить в любой момент;
+это уже похоже на WebSocket-style communication.
+
+Хорошая функция ветки:
+
+Real-time Control Channel
+branch04 — Deadlines / Timeouts
+
+Сценарий: клиент запрашивает долгую операцию, но дает серверу максимум 3 секунды.
+
+Например:
+
+Клиент вызывает генерацию отчета.
+Сервер делает задержку 5 секунд.
+Клиент ставит deadline 3 секунды и получает DEADLINE_EXCEEDED.
+
+Что показать:
+
+deadline на клиенте;
+сервер проверяет, не отменен ли контекст;
+корректная остановка долгой операции;
+отличие timeout от обычной ошибки.
+
+Функция:
+
+Report Generator with Deadline
+branch05 — Cancelling RPC
+
+Сценарий: клиент начал получать stream, но сам отменил подписку.
+
+Например:
+
+Клиент подписался на поток уведомлений.
+Через 10 секунд пользователь нажал “Stop”.
+Клиент отменяет RPC, сервер прекращает отправку.
+
+Что показать:
+
+cancellation со стороны клиента;
+реакция сервера на отмену;
+освобождение ресурсов;
+отличие cancellation от deadline.
+
+Функция:
+
+Notification Subscription with Cancel
+branch06 — Synchronous vs Asynchronous
+
+Сценарий: один и тот же RPC вызывается двумя способами.
+
+Например:
+
+В blocking режиме клиент ждет ответ и блокирует поток.
+В async режиме клиент отправляет запрос и продолжает работу, а ответ приходит callback/observer способом.
+
+Что показать:
+
+blocking stub;
+async stub;
+разницу в поведении клиента;
+где sync проще;
+где async лучше для stream и high-load.
+
+Функция:
+
+Sync vs Async Client Demo
+branch07 — Channels
+
+Сценарий: один клиент работает с gRPC server через managed channel.
+
+Что показать:
+
+что Channel — это не один конкретный запрос, а долгоживущее соединение;
+reuse channel для разных RPC;
+shutdown channel;
+reconnect behavior;
+несколько stubs на одном channel.
+
+Функция:
+
+Channel Lifecycle Demo
+branch08 — Error Handling
+
+Сценарий: сервер возвращает разные gRPC Status codes.
+
+Например:
+
+INVALID_ARGUMENT — неправильный request;
+NOT_FOUND — ресурс не найден;
+DEADLINE_EXCEEDED — превышено время;
+UNAVAILABLE — сервис недоступен;
+PERMISSION_DENIED — нет прав.
+
+Функция:
+
+gRPC Status Codes Demo
+branch09 — Metadata / Interceptors / Auth
+
+Сценарий: клиент передает token в metadata, сервер проверяет его через interceptor.
+
+Что показать:
+
+metadata как аналог headers;
+client interceptor;
+server interceptor;
+простая авторизация;
+отказ через UNAUTHENTICATED.
+
+Функция:
+
+Token-based gRPC Auth
+branch10 — Итоговый production-like demo
+
+Можно собрать мини-систему:
+
+Monitoring Service
+
+Клиенты отправляют метрики, сервер:
+
+принимает client stream;
+отправляет alerts через server stream;
+поддерживает bidirectional control channel;
+использует deadlines;
+умеет cancellation;
+проверяет metadata token;
+логирует ошибки;
+корректно закрывает channels.
+Хорошая логика развития проекта
+
+Я бы сделал так:
+
+branch01 — Server Streaming: сервер → клиент
+branch02 — Client Streaming: клиент → сервер
+branch03 — Bidirectional Streaming: клиент ↔ сервер
+branch04 — Deadlines / Timeouts
+branch05 — Cancelling RPC
+branch06 — Sync vs Async clients
+branch07 — Channels lifecycle
+branch08 — Error handling
+branch09 — Metadata + Interceptors
+branch10 — Final monitoring system
+
+Так проект будет выглядеть не как набор случайных примеров, а как полноценный учебный репозиторий по gRPC.
